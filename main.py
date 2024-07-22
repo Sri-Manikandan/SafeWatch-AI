@@ -5,7 +5,7 @@ from pathlib import Path
 from moviepy.editor import VideoFileClip
 import os
 from langchain_openai import ChatOpenAI
-from pytube import YouTube
+from pytubefix import YouTube
 
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
@@ -14,7 +14,6 @@ client = OpenAI(api_key=api_key)
 def process_video(url):
     try:
         yv = YouTube(url)
-        st.write(yv.streams)
         d_video = yv.streams.filter(only_audio=True).first()
         d_video.download(filename="temp.mp3")
         audio_file = open("temp.mp3", 'rb')
