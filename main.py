@@ -8,7 +8,8 @@ from langchain_openai import ChatOpenAI
 from pytubefix import YouTube
 
 load_dotenv()
-client = OpenAI()
+api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=api_key)
 
 def process_video(url):
     try:
