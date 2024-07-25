@@ -1,107 +1,62 @@
 import streamlit as st
-from langchain_core.messages import AIMessage, HumanMessage
 from langchain_community.document_loaders import WebBaseLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from dotenv import load_dotenv
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.chains.history_aware_retriever import create_history_aware_retriever
-from langchain.chains import create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
+from openai import OpenAI
+from langchain_openai import ChatOpenAI
 
 load_dotenv()
+client = OpenAI()
 
-def get_vectorstore_from_url(url):
-    # get the text in document form
+def get_text(url):
     loader = WebBaseLoader(url)
     document = loader.load()
-    
-    # split the document into chunks
-    text_splitter = RecursiveCharacterTextSplitter()
-    document_chunks = text_splitter.split_documents(document) #here the document says that what kind of chunks we need
-    
-    # create a vectorstore from the chunks
-    vector_store = Chroma.from_documents(document_chunks, OpenAIEmbeddings())
+    text=document[0].page_content
+    refined_text = text.replace("\n", "")
+    return refined_text
 
-    return vector_store
+def moderation_analysis(text):
+    response = client.moderations.create(input=text)
+    output = response.results[0]
+    analysis_result = output.categories
+    category_scores = output.category_scores
+    analysis_text = f"Analysis results: {analysis_result}. Category scores: {category_scores}."
+    return analysis_text
 
-def get_context_retriever_chain(vector_store):
-    llm = ChatOpenAI()
+def chat_analysis(text, analysis_text):
+    llm = ChatOpenAI(model="gpt-4o")
+    prompt = f"""
+    Here is the content of the website:
+    {text}
     
-    retriever = vector_store.as_retriever()
-    
-    prompt = ChatPromptTemplate.from_messages([  #in a form of list of messages(chatprompttemplate)
-      MessagesPlaceholder(variable_name="chat_history"), # replaces the value in chat history
-      ("user", "{input}"),
-      ("user", "Given the above conversation, generate a search query to look up in order to get information relevant to the conversation")
-    ])
-    
-    retriever_chain = create_history_aware_retriever(llm, retriever, prompt)
-    
-    return retriever_chain
-    
-def get_conversational_rag_chain(retriever_chain):
-    
-    llm = ChatOpenAI()
-    
-    prompt = ChatPromptTemplate.from_messages([
-      ("system", "Answer the user's questions based on the below context:\n\n{context}"),
-      MessagesPlaceholder(variable_name="chat_history"),
-      ("user", "{input}"),
-    ])
-    
-    stuff_documents_chain = create_stuff_documents_chain(llm,prompt)
-    
-    return create_retrieval_chain(retriever_chain, stuff_documents_chain)
+    and the response of the OpenAI moderation API is:
+    {analysis_text}
 
-def get_response(user_input):
-    retriever_chain = get_context_retriever_chain(st.session_state.vector_store)
-    conversation_rag_chain = get_conversational_rag_chain(retriever_chain)
-    
-    response = conversation_rag_chain.invoke({
-        "chat_history": st.session_state.chat_history,
-        "input": user_query
-    })
-    
-    return response['answer']
+    Help me find if the given content from the website is kids-friendly or not based on given the content and the response of the OpenAI moderation API.
+    Provide the output with only the conclusion whether it is kids-friendly or not and justification to support it in a few sentences.
+    """
+
+    messages = [
+        (
+            "system",
+            "You are a helpful assistant that helps find if the given content from the website is kids-friendly or not, using the content and the response of the OpenAI moderation API.",
+        ),
+        ("human", prompt),
+    ]
+    ai_msg = llm.invoke(messages)
+    st.write(ai_msg.content)
+
 
 def main():
     st.title("Website AI")
-    with st.sidebar:
-        st.header("Settings")
-        website_url = st.text_input("Website URL")
+    st.write("The Website AI helps to analyze the content of a website and determine if it contains any harmful or inappropriate content.")
 
-    if website_url is None or website_url == "":
-        st.info("Please enter a website URL")
+    website_url = st.text_input("Website URL")
+    if st.button("Analyze"):
+        with st.spinner("Processing..."):
+            text = get_text(website_url)
+            analysis_text = moderation_analysis(text)
+            chat_analysis(text, analysis_text)
 
-    else:
-        # session state
-        if "chat_history" not in st.session_state:
-            st.session_state.chat_history = [
-                AIMessage(content="Hello, I am a bot. How can I help you?"),
-            ]
-        if "vector_store" not in st.session_state:
-            st.session_state.vector_store = get_vectorstore_from_url(website_url)    
-
-        # user input
-        user_query = st.chat_input("Type your message here...")
-        if user_query is not None and user_query != "":
-            response = get_response(user_query)
-            st.session_state.chat_history.append(HumanMessage(content=user_query))
-            st.session_state.chat_history.append(AIMessage(content=response))
-            
         
-
-        # conversation
-        for message in st.session_state.chat_history:
-            if isinstance(message, AIMessage):
-                with st.chat_message("AI"):
-                    st.write(message.content)
-            elif isinstance(message, HumanMessage):
-                with st.chat_message("Human"):
-                    st.write(message.content)
-
-# Ensure the main function is called when the script is run
 if __name__ == "__main__":
     main()
